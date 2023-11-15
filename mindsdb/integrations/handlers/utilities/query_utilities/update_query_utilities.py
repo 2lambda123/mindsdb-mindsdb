@@ -1,5 +1,6 @@
+import pandas as pd
 from mindsdb_sql.parser import ast
-from typing import Text, List, Optional
+from typing import Text, List, Optional, Tuple, Any
 
 from .exceptions import UnsupportedColumnException
 
@@ -43,7 +44,7 @@ class UPDATEQueryParser(BaseQueryParser):
                 if value[0] not in self.supported_columns:
                     raise UnsupportedColumnException(f"Unsupported column: {value[0]}")
             
-            values_to_update[value[0]] = value[1].value
+            values_to_update[value[0]] = value[1]
 
         return values_to_update
 
@@ -65,3 +66,27 @@ class UPDATEQueryExecutor(BaseQueryExecutor):
           Because all of the records need to be extracted to be passed in as a DataFrame, this class is not very computationally efficient.
           Therefore, DO NOT use this class if the API/SDK that you are using supports updating records in bulk.
     """
+    def __init__(self, df: pd.DataFrame, set_clauses: List[Tuple[Text, Any]], where_conditions: List[List[Text]]):
+        self.df = df
+        self.set_clauses = set_clauses
+        self.where_conditions = where_conditions
+
+    def execute_query(self) -> pd.DataFrame:
+        """
+        Execute the query.
+        """
+        self.execute_where_clause()
+
+        self.execute_set_clauses()
+
+        return self.df
+    
+    def execute_set_clauses(self)  -> None:
+        """
+        Execute the set clause of the query.
+        """
+        for column, value in self.set_clauses.items():
+            if not isinstance(column, str):
+                raise ValueError("The column name should be a string")
+            
+            self.df[column] = value
