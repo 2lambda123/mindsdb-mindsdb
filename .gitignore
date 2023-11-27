@@ -55,3 +55,6 @@ tests/__init__.py
 
 # Docs
 node_modules
+
+# Chatbot access tokens
+agent_tokens
