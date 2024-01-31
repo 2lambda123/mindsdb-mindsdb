@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from unittest import mock
 from pathlib import Path
 
@@ -117,6 +118,8 @@ class BaseUnitTest:
         db.session.add(r)
         r = db.Integration(name="huggingface", data={}, engine="huggingface")
         db.session.add(r)
+        r = db.Integration(name="hf_api_engine", data={}, engine="huggingface_api")
+        db.session.add(r)
         r = db.Integration(name="merlion", data={}, engine="merlion")
         db.session.add(r)
         r = db.Integration(name="monkeylearn", data={}, engine="monkeylearn")
@@ -130,6 +133,8 @@ class BaseUnitTest:
         r = db.Integration(name="popularity_recommender", data={}, engine="popularity_recommender")
         db.session.add(r)
         r = db.Integration(name="lightfm", data={}, engine="lightfm")
+        db.session.add(r)
+        r = db.Integration(name="ludwig", data={}, engine="ludwig")
         db.session.add(r)
         r = db.Integration(name="openai", data={}, engine="openai")
         db.session.add(r)
@@ -166,6 +171,18 @@ class BaseUnitTest:
         db.session.add(r)
 
         r = db.Integration(name="leonardo_ai", data={}, engine="leonardo_ai")
+        db.session.add(r)
+
+        r = db.Integration(name="neuralforecast", data={}, engine="neuralforecast")
+        db.session.add(r)
+
+        r = db.Integration(name="popularity-recommender", data={}, engine="popularity_recommender")
+        db.session.add(r)
+
+        r = db.Integration(name="spacy", data={}, engine="spacy")
+        db.session.add(r)
+
+        r = db.Integration(name="stabilityai", data={}, engine="stabilityai")
         db.session.add(r)
 
         # Lightwood should always be last (else tests break, why?)
@@ -276,10 +293,6 @@ class BaseExecutorTest(BaseUnitTest):
         self.mock_config = config_patch.__enter__()
         self.mock_config.side_effect = lambda x: None
 
-    def teardown_method(self):
-        # Don't want cache to pick up a stale version with the wrong duckdb_path.
-        self.command_executor.session.integration_controller.delete('dummy_data')
-
     def save_file(self, name, df):
         file_path = tempfile.mktemp(prefix="mindsdb_file_")
         df.to_parquet(file_path)
@@ -382,6 +395,19 @@ class BaseExecutorTest(BaseUnitTest):
         )
         self.db.session.add(r)
         self.db.session.commit()
+
+    def wait_for_predictor(self, project, name, timeout_seconds=500):
+        done = False
+        for _ in range(timeout_seconds):
+            ret = self.run_sql(f"select * from {project}.models where name='{name}'")
+            if not ret.empty:
+                if ret["STATUS"][0] == "complete":
+                    return
+                elif ret["STATUS"][0] == "error":
+                    raise RuntimeError("predictor failed", ret["ERROR"][0])
+            time.sleep(1)
+        if not done:
+            raise RuntimeError("Predictor {} wasn't created before timeout".format(name))
 
 
 class BaseExecutorDummyML(BaseExecutorTest):
