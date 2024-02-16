@@ -12,18 +12,15 @@ from mindsdb.integrations.handlers.rag_handler.settings import (
 from mindsdb.integrations.libs.base import BaseMLEngine
 from mindsdb.utilities import log
 
-# these require no additional arguments
-
+# These require no additional arguments
 logger = log.getLogger(__name__)
-
 
 class RAGHandler(BaseMLEngine):
     """
-    RAGHandler is a MindsDB integration with supported LLM APIs allows users to run question answering
+    RAGHandler is a MindsDB integration with supported LLM APIs allowing users to run question answering
     on their data by providing a question.
 
     The User is able to provide data that provides context for the questions, see create() method for more details.
-
     """
 
     name = "rag"
@@ -46,72 +43,77 @@ class RAGHandler(BaseMLEngine):
         args: Optional[Dict] = None,
     ):
         """
-        Dispatch is running embeddings and storing in a VectorDB, unless user already has embeddings persisted
+        Dispatch is running embeddings and storing them in a VectorDB, unless the user already has embeddings persisted.
         """
-        # get api key from user input on create ML_ENGINE or create MODEL
-        args = args["using"]
+        self._get_api_key(args)
+        self._get_input_args(args)
+        self._create_vector_store(args, df)
+        self._run_embeddings(args, df)
+        self._export_args(args)
+        self._sync_vector_store(args)
 
+    def _get_api_key(self, args):
         ml_engine_args = self.engine_storage.get_connection_args()
-
-        # for a model created with USING, only get api for that specific llm type
         args.update({k: v for k, v in ml_engine_args.items() if args["llm_type"] in k})
 
+    def _get_input_args(self, args):
         input_args = build_llm_params(args)
-
         args = RAGHandlerParameters(**input_args)
 
-        # create folder for vector store to persist embeddings or load from existing folder
+    def _create_vector_store(self, args, df):
         args.vector_store_storage_path = self.engine_storage.folder_get(
             args.vector_store_folder_name
         )
 
+    def _run_embeddings(self, args, df):
         if args.run_embeddings:
-            if "context_columns" not in args and df is not None:
-
-                # if no context columns provided, use all columns in df
-                logger.info("No context columns provided, using all columns in df")
-                args.context_columns = df.columns.tolist()
-
-            if "embeddings_model_name" not in args:
-                logger.info(
-                    f"No embeddings model provided in query, using default model: {DEFAULT_EMBEDDINGS_MODEL}"
-                )
-
-            if df is not None or args.url is not None:
-                # if user provides a dataframe or url, run embeddings and store in vector store
-
-                ingestor = RAGIngestor(args=args, df=df)
-                ingestor.embeddings_to_vectordb()
-
+            self._handle_context_columns(args, df)
+            self._handle_embeddings_model(args)
+            self._run_embeddings_and_store(args, df)
         else:
-            # Note this should only be run if run_embeddings is false or if no data is provided in query
             logger.info("Skipping embeddings and ingestion into Chroma VectorDB")
 
+    def _handle_context_columns(self, args, df):
+        if "context_columns" not in args and df is not None:
+            logger.info("No context columns provided, using all columns in df")
+            args.context_columns = df.columns.tolist()
+
+    def _handle_embeddings_model(self, args):
+        if "embeddings_model_name" not in args:
+            logger.info(
+                f"No embeddings model provided in the query, using the default model: {DEFAULT_EMBEDDINGS_MODEL}"
+            )
+
+    def _run_embeddings_and_store(self, args, df):
+        if df is not None or args.url is not None:
+            ingestor = RAGIngestor(args=args, df=df)
+            ingestor.embeddings_to_vectordb()
+
+    def _export_args(self, args):
         export_args = args.dict(exclude={"llm_params"})
-        # 'callbacks' aren't json serializable, we do this to avoid errors
         export_args["llm_params"] = args.llm_params.dict(exclude={"callbacks"})
-
-        # for mindsdb cloud, store data in shared file system
-        # for cloud version of mindsdb to make it be usable by all mindsdb nodes
-        self.engine_storage.folder_sync(args.vector_store_folder_name)
-
         self.model_storage.json_set("args", export_args)
 
-    def update(self, args) -> None:
+    def _sync_vector_store(self, args):
+        self.engine_storage.folder_sync(args.vector_store_folder_name)
 
-        # build llm params from user input args in update query
+    def update(self, args) -> None:
+        """
+        Update the RAG model with new parameters.
+        """
+        # Build llm params from user input args in the update query
         updated_args = build_llm_params(args["using"], update=True)
 
-        # get current model args
+        # Get current model args
         current_model_args = self.model_storage.json_get("args")["using"]
 
-        # update current args with new args
+        # Update current args with new args
         current_model_args.update(updated_args)
 
-        # validate updated args are valid
+        # Validate updated args are valid
         RAGHandlerParameters(**build_llm_params(current_model_args))
 
-        # if valid, update model args
+        # If valid, update model args
         self.model_storage.json_set("args", current_model_args)
 
     def predict(self, df: pd.DataFrame = None, args: dict = None):
@@ -119,7 +121,6 @@ class RAGHandler(BaseMLEngine):
         Dispatch is performed depending on the underlying model type. Currently, only question answering
         is supported.
         """
-
         input_args = build_llm_params(self.model_storage.json_get("args"))
 
         args = RAGHandlerParameters(**input_args)
@@ -128,11 +129,11 @@ class RAGHandler(BaseMLEngine):
             args.vector_store_folder_name
         )
 
-        # get question answering results
+        # Get question answering results
         question_answerer = RAGQuestionAnswerer(args=args)
 
-        # get question from sql query
-        # e.g. where question = 'What is the capital of France?'
+        # Get question from SQL query
+        # e.g., where question = 'What is the capital of France?'
         response = question_answerer(df["question"].tolist()[0])
 
         return pd.DataFrame(response)
