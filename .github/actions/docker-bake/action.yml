@@ -24,7 +24,7 @@ runs:
 
         # Configure our buildkit builders
         docker buildx create --name remote-buildkit-agent --node mdb_amd64 --platform linux/amd64 --driver=remote --use tcp://remote-buildkit-agent.infrastructure.svc.cluster.local:80 || true # Create the builder (might already exist)
-        docker buildx create --name=remote-buildkit-agent --node mdb_arm64 --platform linux/arm64 --append --driver=remote --use tcp://remote-buildkit-agent-arm.infrastructure.svc.cluster.local:80 || true # Same for ARM
+        # docker buildx create --name=remote-buildkit-agent --node mdb_arm64 --platform linux/arm64 --append --driver=remote --use tcp://remote-buildkit-agent-arm.infrastructure.svc.cluster.local:80 || true # Same for ARM
 
         VERSION=$IMAGE_PREFIX BRANCH=${{ env.CI_ACTION_REF_NAME }} PUSH_TO_DOCKERHUB=${{ inputs.push-to-dockerhub }} PLATFORM="" docker buildx bake -f docker/docker-bake.hcl --print
 
