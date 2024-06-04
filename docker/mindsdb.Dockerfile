@@ -63,6 +63,7 @@ RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements/requi
 COPY docker/mindsdb_config.release.json /root/mindsdb_config.json
 
 
+
 ENV PYTHONUNBUFFERED 1
 ENV MINDSDB_DOCKER_ENV 1
 

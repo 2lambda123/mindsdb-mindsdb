@@ -10,8 +10,22 @@ from langchain_community.chat_models import ChatAnthropic, ChatOpenAI, ChatAnysc
 from langchain_core.prompts import PromptTemplate
 from langfuse.callback import CallbackHandler
 
+
 import numpy as np
 import pandas as pd
+from llm_controller import LLMDataController
+
+
+
+
+from dspy import ColBERTv2, configure, BootstrapFewShotWithRandomSearch
+from dspy.predict.langchain import LangChainPredict, LangChainModule
+from langchain.llms import OpenAI
+from langchain.chains import Chain
+from langchain.prompts import PromptTemplate
+from langchain.retrieval import SimpleRetriever
+
+
 
 from mindsdb.integrations.handlers.langchain_handler.constants import (
     ANTHROPIC_CHAT_MODELS,
@@ -59,6 +73,14 @@ class LangChainHandler(BaseMLEngine):
         - Ollama
 
     Supported standard tools:
+    Supported LLM providers:
+        - OpenAI
+        - Anthropic
+        - Anyscale
+        - LiteLLM
+        - Ollama
+
+    Supported standard tools:
         - python_repl
         - serper.dev search
     """
@@ -75,10 +97,14 @@ class LangChainHandler(BaseMLEngine):
         # if True, the target column name does not have to be specified at creation time.
         self.generative = True
         self.default_agent_tools = DEFAULT_AGENT_TOOLS
+        self.llm_data_controller = LLMDataController()
         self.log_callback_handler = log_callback_handler
         self.langfuse_callback_handler = langfuse_callback_handler
         if self.log_callback_handler is None:
             self.log_callback_handler = LogCallbackHandler(logger)
+        self.use_dspy = kwargs.get('use_dspy', False)  # option to use DSPy or not
+        if self.use_dspy:
+            self.setup_dspy()
 
     def _get_llm_provider(self, args: Dict) -> str:
         if 'provider' in args:
@@ -202,11 +228,12 @@ class LangChainHandler(BaseMLEngine):
         args['embedding_model_provider'] = args.get('embedding_model', self._get_embedding_model_provider(args))
 
         df = df.reset_index(drop=True)
-        agent = self.create_agent(df, args, pred_args)
-        # Use last message as prompt, remove other questions.
-        user_column = args.get('user_column', DEFAULT_USER_COLUMN)
-        df.iloc[:-1, df.columns.get_loc(user_column)] = None
-        return self.run_agent(df, agent, args, pred_args)
+        # agent = self.create_agent(df, args, pred_args)
+        # # Use last message as prompt, remove other questions.
+        # user_column = args.get('user_column', DEFAULT_USER_COLUMN)
+        # df.iloc[:-1, df.columns.get_loc(user_column)] = None
+        # return self.run_agent(df, agent, args, pred_args)
+        return predict_dspy(df, args)
 
     def create_agent(self, df: pd.DataFrame, args: Dict=None, pred_args: Dict=None) -> AgentExecutor:
         pred_args = pred_args if pred_args else {}
@@ -238,6 +265,7 @@ class LangChainHandler(BaseMLEngine):
                             pred_args,
                             self.default_agent_tools)
 
+        # Set up memory.
         # Prefer prediction prompt template over original if provided.
         prompt_template = pred_args.get('prompt_template', args['prompt_template'])
         if 'context' in pred_args:
@@ -252,6 +280,8 @@ class LangChainHandler(BaseMLEngine):
         user_column = args.get('user_column', DEFAULT_USER_COLUMN)
         assistant_column = args.get('assistant_column', DEFAULT_ASSISTANT_COLUMN)
         for row in df[:-1].to_dict('records'):
+            question = row[user_column]
+            answer = row[assistant_column]
             question = row[user_column]
             answer = row[assistant_column]
             if question:
@@ -328,6 +358,8 @@ class LangChainHandler(BaseMLEngine):
         try:
             for future in as_completed(futures, timeout=agent_timeout_seconds):
                 completions.append(future.result())
+            # add a place to store output
+            self.store_llm_output(prompts, completions, False)
         except TimeoutError:
             completions.append("I'm sorry! I couldn't come up with a response in time. Please try again.")
         # Can't use ThreadPoolExecutor as context manager since we need wait=False.
@@ -341,9 +373,86 @@ class LangChainHandler(BaseMLEngine):
 
         return pred_df
 
+    def store_llm_output(self, input_data, output_data, retrieval):
+        return self.llm_data_controller.add_llm_data(input_data, output_data)
+    
+    # def fetch_context_from_db(self, question):
+    #     return self.llm_data_controller.get_llm_data_by_question(question)
+
+    # def update_retrieval_index(self, input_data, output_data):
+    #     llm_data_id = self.fetch_id_from_question(input_data) 
+    #     self.llm_data_controller.update_llm_data(llm_data_id, new_input_data=input_data, new_output_data=output_data)
+
+
     def describe(self, attribute: Optional[str] = None) -> pd.DataFrame:
         tables = ['info']
         return pd.DataFrame(tables, columns=['tables'])
 
     def finetune(self, df: Optional[pd.DataFrame] = None, args: Optional[Dict] = None) -> None:
         raise NotImplementedError('Fine-tuning is not supported for LangChain models')
+
+    def setup_dspy(self):
+        # This is the default language model and retrieval model in DSPy
+        colbertv2 = ColBERTv2(url='http://20.102.90.50:2017/wiki17_abstracts')
+        configure(rm=colbertv2)
+        self.llm = OpenAI(model_name="gpt-3.5-turbo-instruct")
+
+    def create_dspy_chain(self):
+        # Define LangChain Chain using Python functions for DSPy
+        retriever = SimpleRetriever(retrieve_func=lambda x: ColBERTv2.retrieve(x))
+        prompt_template = PromptTemplate.from_template("Given {context}, answer the question `{question}`.")
+        chain = Chain(retriever=retriever, llm=self.llm, prompt_template=prompt_template)
+        # Convert to DSPy Module
+        langchain_predict = LangChainPredict(chain.prompt_template, chain.llm)
+        dspy_module = LangChainModule(chain.wrap(langchain_predict))
+        return dspy_module
+    
+    def generate_dspy_response(self, question, context):
+
+        # input for the DSPy module
+        input_dict = {
+            "question": question,
+            "context": context
+        }
+
+        if self.use_dspy:
+            dspy_chain = self.create_dspy_chain()
+
+        # Use DSPy chain with the prepared input
+        try:
+            response = self.dspy_chain.invoke(input_dict)
+            # Extract the relevant response part if necessary
+            return response['output'], context
+        except:
+            return "Error in processing your request.", context
+
+
+    def predict_dspy(self, df: pd.DataFrame, args: Dict=None) -> pd.DataFrame:
+        pred_args = args['predict_params'] if args else {}
+        args = self.model_storage.json_get('args')
+
+        #prompts, empty_prompts = get_completed_prompts(args, df)
+
+        if self.use_dspy:
+            dspy_chain = self.create_dspy_chain()
+            responses = []
+            for index, row in df.iterrows():
+                question = row['question']
+                context = row['context']
+                answer, context_used = self.generate_dspy_response(question, context)
+                responses.append({'answer': answer, 'context': context_used})
+                self.llm_data_controller.add_llm_data(question, answer, True)
+                data = self.llm_data_controller.list_all_llm_data()
+                data_sampled = data.sample(fraction = 1)
+                self.optimize_with_dspy(dspy_chain, data_sampled.iloc[:int(len(data_sampled)*.8)], data_sampled.iloc[int(len(data_sampled)*.8):])
+
+            return pd.DataFrame(responses)
+
+        return df
+
+    # Elaborate on this when we incorportate train/test data
+    def optimize_with_dspy(self, chain, trainset, valset):
+        optimizer = BootstrapFewShotWithRandomSearch()
+        optimized_chain = optimizer.compile(chain, trainset=trainset, valset=valset)
+        return optimized_chain
+
