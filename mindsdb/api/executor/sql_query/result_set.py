@@ -1,3 +1,4 @@
+from typing import List
 import copy
 import pandas as pd
 
@@ -34,9 +35,16 @@ class Column:
 
 
 class ResultSet:
-    def __init__(self):
-        self._columns = []
-        self._df = None
+    def __init__(self, columns=None, values: List[List] = None):
+        if columns is None:
+            columns = []
+        self._columns = columns
+
+        if values is None:
+            df = None
+        else:
+            df = pd.DataFrame(values)
+        self._df = df
 
         self.is_prediction = False
 
