@@ -60,7 +60,7 @@ class SqliteStorageHandler(KVStorageHandler):
 
     def _get(self, serialized_key):
         cur = self.connection.cursor()
-        results = list(cur.execute(f"""select value from store where key='{serialized_key}'"""))
+        results = list(cur.execute("""select value from store where key=?""", (serialized_key, )))
         if results:
             return results[0][0]  # should always be a single match, hence the [0]s
         else:
