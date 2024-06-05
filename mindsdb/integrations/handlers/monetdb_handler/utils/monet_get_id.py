@@ -7,13 +7,13 @@ def schema_id(connection, schema_name=None):
         cur.execute("SELECT current_schema")
         schema_name=cur.fetchall()[0][0]
 
-    query = f"""
+    query = """
                 SELECT id
                 FROM sys.schemas
-                WHERE name = '{schema_name}'
+                WHERE name = ?
             """
     
-    cur.execute(query)
+    cur.execute(query, (schema_name, ))
 
     try:
         schema_id = cur.fetchall()[0][0]
@@ -33,12 +33,12 @@ def table_id(connection, table_name, schema_name=None):
     q = f"""
         SELECT id
         FROM sys.tables
-        WHERE name = '{table_name}'
+        WHERE name = ?
         AND schema_id = {schema_idm}
         """
     
     cur = connection.cursor()
-    cur.execute(q)
+    cur.execute(q, (table_name, ))
 
     try:
         table_id = cur.fetchall()[0][0] 
