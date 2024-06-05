@@ -59,6 +59,17 @@ class SqliteStorageHandler(KVStorageHandler):
             self.connection.commit()
 
     def _get(self, serialized_key):
+        """        Retrieves the value associated with the given serialized key from the
+        store.
+
+        Args:
+            serialized_key (str): The serialized key to retrieve the value for.
+
+        Returns:
+            str or None: The value associated with the serialized key, or None if no
+                value is found.
+        """
+
         cur = self.connection.cursor()
         results = list(cur.execute("""select value from store where key=?""", (serialized_key, )))
         if results:
