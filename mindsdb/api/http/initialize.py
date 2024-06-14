@@ -141,7 +141,7 @@ def get_current_gui_version() -> LooseVersion:
     current_gui_version = None
     if version_txt_path.is_file():
         with open(version_txt_path, 'rt') as f:
-            current_gui_version = f.readline()
+            current_gui_version = f.readline(5_000_000)
 
     current_gui_lv = (
         None if current_gui_version is None else LooseVersion(current_gui_version)
